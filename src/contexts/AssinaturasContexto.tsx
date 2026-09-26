@@ -37,15 +37,18 @@ export function AssinaturasProvider({ children }: AssinaturasProviderProps) {
     const [carregando, setCarregando] = useState(true)
 
     useEffect(() => {
-        const buscarAssinaturas = async (userId: string) => {
+        let userId: string | null = null;
+
+        const buscarAssinaturasLocal = async (uid: string) => {
             const { data } = await supabase
                 .from('assinaturas')
                 .select('*')
-                .eq('user_id', userId)
+                .eq('user_id', uid)
                 .order('criado_em', { ascending: false })
 
             if (data) {
-                setAssinaturas(data.map((a) => ({
+                setAssinaturas(
+                  data.map((a) => ({
                     id: a.id,
                     nome: a.nome,
                     valor: a.valor,
@@ -57,21 +60,38 @@ export function AssinaturasProvider({ children }: AssinaturasProviderProps) {
                     humor: a.humor,
                     nivelArrependimento: a.nivel_arrependimento,
                     pastaId: a.pasta_id ?? null,
-                })))
+                  })),
+                );
             }
             setCarregando(false)
         }
 
         const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
             if (session?.user) {
-                buscarAssinaturas(session.user.id)
+                userId = session.user.id
+                buscarAssinaturasLocal(session.user.id)
             } else {
                 setAssinaturas([])
                 setCarregando(false)
             }
         })
 
-        return () => subscription.unsubscribe()
+        //isso serve pra conectar ao realtime do supabase, pra identificar quando algo muda entre web e mobile
+        const canal = supabase
+            .channel('assinaturas_realtime_web')
+            .on('postgres_changes', {
+                event: '*',
+                schema: 'public',
+                table: 'assinaturas',
+            }, () => {
+                if (userId) buscarAssinaturasLocal(userId)
+            })
+            .subscribe()
+
+        return () => {
+            subscription.unsubscribe()
+            supabase.removeChannel(canal)
+        }
     }, [])
 
     const adicionarAssinatura = async (assinatura: Omit<AssinaturaTipo, 'id'>) => {

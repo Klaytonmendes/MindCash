@@ -32,12 +32,14 @@ export function DespesasProvider({ children }: DespesasProviderProps) {
     const [carregando, setCarregando] = useState(true)
 
     useEffect(() => {
-        const buscarDespesas = async (userId: string) => {
-            const {data} = await supabase
-            .from('despesas')
-            .select('*')
-            .eq('user_id', userId)
-            .order('criado_em', {ascending: false})
+        let userId: string | null = null;
+
+        const buscarDespesasLocal = async (uid: string) => {
+            const { data } = await supabase
+                .from('despesas')
+                .select('*')
+                .eq('user_id', uid)
+                .order('criado_em', { ascending: false })
 
             if (data) {
                 setDespesas(data.map((d) => ({
@@ -54,15 +56,36 @@ export function DespesasProvider({ children }: DespesasProviderProps) {
             setCarregando(false)
         }
 
-        const {data: {subscription}} = supabase.auth.onAuthStateChange((_event, session) => {
+        const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
             if (session?.user) {
-                buscarDespesas(session.user.id)
-            }else{
+                userId = session.user.id
+                buscarDespesasLocal(session.user.id)
+            } else {
                 setDespesas([])
                 setCarregando(false)
             }
         })
-        return () => subscription.unsubscribe()
+
+        //isso serve pra conectar ao realtime do supabase, pra identificar quando algo muda entre web e mobile
+        const canal = supabase
+          .channel("despesas_realtime_web")
+          .on(
+            "postgres_changes",
+            {
+              event: "*",
+              schema: "public",
+              table: "despesas",
+            },
+            () => {
+              if (userId) buscarDespesasLocal(userId);
+            },
+          )
+          .subscribe();
+
+        return () => {
+            subscription.unsubscribe()
+            supabase.removeChannel(canal)
+        }
     }, [])
 
     const adicionarDespesa = async (despesa: Omit<DespesaTipo, 'id'>) => {
